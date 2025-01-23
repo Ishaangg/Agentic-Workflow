@@ -15,8 +15,6 @@ os.environ["LANGCHAIN_TRACING_V2"] = "true"
 os.environ["LANGCHAIN_ENDPOINT"] = "https://api.smith.langchain.com"
 os.environ["LANGCHAIN_PROJECT"] = "Joblo"
 
-
-
 def coerce_to_valid_json(input_str: str) -> str:
     """
     Attempts to convert a Python dict-like string into valid JSON by:
@@ -33,7 +31,6 @@ def coerce_to_valid_json(input_str: str) -> str:
         # If it fails, just return the original string unmodified
         return input_str
 
-
 @tool
 def calculator(expression: str) -> str:
     """ Evaluate a math expression """
@@ -42,7 +39,6 @@ def calculator(expression: str) -> str:
         return str(result)
     except Exception as e:
         return f"Error:{e}"
-
 
 @tool
 def web_search(query: str) -> str:
@@ -78,7 +74,6 @@ def web_search(query: str) -> str:
             return f"Error: Unable to fetch search results. Status Code: {response.status_code}"
     except Exception as e:
         return f"Error: {e}"
-
 
 @tool
 def gmail_get_emails(query: str) -> str:
@@ -252,19 +247,99 @@ def google_calendar_list_events(query: str) -> str:
     except Exception as e:
         return f"Error: {e}"
 
+@tool
+def google_calendar_create_event(input_data: str) -> str:
+    """
+    Creates a new event in Google Calendar using the provided input data.
+
+    Input:
+    - A JSON string containing event details such as 'summary', 'location', 'description',
+      'start', and 'end'. The 'start' and 'end' should include 'dateTime' and 'timeZone'.
+
+      Example:
+      {
+          "summary": "Project Meeting",
+          "location": "Conference Room",
+          "description": "Discussing project milestones and deadlines.",
+          "start": {
+              "dateTime": "2025-02-01T10:00:00",
+              "timeZone": "UST"
+          },
+          "end": {
+              "dateTime": "2025-02-01T11:00:00",
+              "timeZone": "UST"
+          }
+      }
+
+    Returns:
+    - Success message with event ID or detailed error message.
+    """
+    try:
+        client_id = os.getenv("GOOGLE_CLIENT_ID")
+        client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+        refresh_token = os.getenv("CALENDAR_REFRESH_TOKEN")
+
+        if not (client_id and client_secret and refresh_token):
+            return "Missing Google Calendar OAuth credentials in environment variables!"
+
+        # Parse input data
+        event_data = json.loads(input_data)
+
+        # Validate required fields
+        required_fields = ['summary', 'start', 'end']
+        for field in required_fields:
+            if field not in event_data:
+                return f"Missing required field: {field}"
+
+        creds = Credentials.from_authorized_user_info(
+            {
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "refresh_token": refresh_token,
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        )
+
+        service = build("calendar", "v3", credentials=creds)
+
+        event = {
+            'summary': event_data['summary'],
+            'location': event_data.get('location', ''),
+            'description': event_data.get('description', ''),
+            'start': event_data['start'],
+            'end': event_data['end'],
+            'reminders': {
+                'useDefault': True,
+            },
+        }
+
+        created_event = service.events().insert(calendarId='primary', body=event).execute()
+
+        if isinstance(created_event, dict) and 'id' in created_event:
+            return f"Event created successfully! Event ID: {created_event.get('id')}"
+        else:
+            # If the API returns an error message as a string
+            return f"Error: Unexpected response format. Response: {created_event}"
+
+    except Exception as e:
+        return f"Error: {e}"
+
+# Initialize OpenAI LLM
 api_key = os.getenv("OPENAI_API_KEY")
 llm = ChatOpenAI(model="gpt-4o-mini", api_key=api_key, temperature=0)
 
+# Define the list of tools including the new calendar creation tool
 tools = [
     Tool(name="Calculator", func=calculator, description="Performs calculations"),
     Tool(name="webSearch", func=web_search, description="Searches the web for a query using Google Custom Search."),
     Tool(name="gmailGetEmails", func=gmail_get_emails, description="Retrieves up to 5 recent emails from Gmail based on a search query."),
     Tool(name="GoogleCalendarListEvents", func=google_calendar_list_events, description="Lists upcoming Google Calendar events."),
+    Tool(name="googleCalendarCreateEvent", func=google_calendar_create_event, description="Creates a new event in Google Calendar with provided details."),
     Tool(name="gmailSendEmail", func=gmail_send_email, description="Sends an email using Gmail API."),
-
 ]
 
+# Initialize the agent with the updated tools list
 agent = initialize_agent(tools, llm, agent="zero-shot-react-description", verbose=True)
 
-response = agent.run("Any events for today in calender")
+response = agent.run(f"Web search and tell me something about Rajat Dalal")
 print(response)
